@@ -1,0 +1,34 @@
+Evilduino
+============================================================================
+License:		Creative Commons Attribution-ShareAlike 3.0 unported
+Author(s):		limpygnome			limpygnome@gmail.com
+				netduino.com
+Version:		1.0.0
+
+> An internet-controlled binary clock with a webserver; summary of features:
+> Binary clock LED matrix.
+> Sensors - light, temperature and tilt.
+> Webserver:
+	> Ability to handle large amounts of data, despite limited capacity.
+	> Supports GET and POST requests with form data.
+	> Background changes relative to the amount of light.
+	> Large file uploading.
+	> Paged buffer to get around RAM issues whilst building the HTML for
+	  pages.
+	> Supports URL encoding.
+> Buzzer and alarm system.
+> Internet-controlled time.
+> Multi-threaded.
+
+Currently this binary clock utilizes two shift-registers with specific
+outputs allocated within lightsThread and calculationsThread.
+
+Platform
+============================================================================
+This software is designed for the .NET Microframework 4.2 RC4 and utilizes
+the Netduino Plus as the main-board.
+
+Change-log
+============================================================================
+v1.0.0:
+- Created Git repository.
