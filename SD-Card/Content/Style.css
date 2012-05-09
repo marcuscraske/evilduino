@@ -147,3 +147,15 @@ h2
 	float: right;
 	margin: 0em 0em 0.5em 0.5em;
 }
+/* Guestbook */
+.GB_MSG
+{
+	border: solid 0.5em #C00;
+	padding: 0.5em;
+	color: #C00;
+	margin-bottom: 0.5em;
+}
+.GB_MSG p
+{
+	color: #000;
+}

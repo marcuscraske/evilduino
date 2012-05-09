@@ -9,9 +9,10 @@
  * --   Netduino.com community for a lot of help <3
  * 
  * To-do:
- * --   Replace urlDecode code with Convert class and with checking
- *      similar to urlDecodeWithOverflow, to avoid trying to replace
- *      genuine %'s,
+ * --   Make a database class for a txt file, where data is written on
+ *      lines. The idea would be to write data to the bottom but read
+ *      it from bottom to top - opposed to top to bottom. This would
+ *      be used for the guestbook posts system.
  */
 
 using System;
@@ -702,6 +703,9 @@ namespace BinaryClock
     <li>100 mbps NIC.</li>
     <li>7.5-12.0 VDC USB power - 200 mmA max.</li>
 </ul>
+<h2>YouTube</h2>
+<iframe width=""420"" height=""315"" src=""http://www.youtube.com/embed/q6_V7x5XT5U"" frameborder=""0"" allowfullscreen></iframe>
+
 <h2>Images</h2>
 <img src=""/Content/Evilduino1.jpg"" alt=""Evilduino"" class=""THUMB"" />
 <img src=""/Content/Evilduino2.jpg"" alt=""Evilduino"" class=""THUMB"" />
@@ -715,6 +719,7 @@ namespace BinaryClock
                         default:
                             const int postsPerPage = 5;
                             int page = request.requestDirs.Length >= 3 ? tryParse(request.requestDirs[2], 1) : 1;
+                            response.buffer.Append("<h2>Posts - Page " + page + "</h2>");
                             lock (guestbookIOLocking)
                             {
                                 FileStream f = new FileStream("\\SD\\Guestbook.txt", FileMode.OpenOrCreate, FileAccess.Read);
@@ -734,11 +739,11 @@ namespace BinaryClock
                                         if(separator != -1)
                                             response.buffer.Append(
         @"
-    <div>
+    <div class=""GB_MSG"">
     <p>
     ").Append(line.Substring(separator + 1)).Append(@"
     </p>
-    ").Append(line.Substring(0, separator)).Append(@"
+    ").Append(line.Substring(0, separator)).Append(@" <a href=""/evilduino/guestbook/delete/").Append(((page * postsPerPage) - postsPerPage) + i).Append(@""">[Delete]</a>").Append(@"
     </div>
     ");
                                     }
@@ -750,16 +755,16 @@ namespace BinaryClock
                             }
                             response.buffer.Append(
 @"
-<a href=""/evilduino/guestbook/post"">Make a Post</a>
+<p>
+    <a href=""/evilduino/guestbook/post"">Make a Post</a> Pages: <a href=""/evilduino/guestbook/").Append(page > 1 ? page - 1 : 1).Append(@""">Previous</a> <a href=""").Append(page == int.MaxValue ? int.MaxValue : page + 1).Append(@""">Next</a>
+</p>
 ");
                             break;
                         case "post":
                             if (request["message"] != null && request["message"].Length > 0)
                             {
-                                // Write the post to the end of the file
-                                StringBuilder data = new StringBuilder(urlDecode(request["message"]));
-                                // Security
-                                data.Replace("\r", "").Replace("\n", "").Replace("<", "&lt;").Replace(">", "&gt;");
+                                // Write the post to the guestbook file
+                                StringBuilder data = new StringBuilder(urlDecode(request["message"], true));
                                 // Write to file
                                 lock (guestbookIOLocking)
                                 {
@@ -1003,6 +1008,113 @@ namespace BinaryClock
                     break;
             }
         }
+        #endregion
+
+        #region "Methods - Site Template"
+        public static void writePage_Header(HttpRequest request, HttpResponse response, string title)
+        {
+            string background = ((int)(Program.light / 100 * 255)).ToString("X");
+            response.buffer.Append(
+@"
+<!DOCTYPE html PUBLIC ""-//W3C//DTD XHTML 1.0 Strict//EN"" ""http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"">
+<html xmlns=""http://www.w3.org/1999/xhtml"">
+<head>
+<title>Evilduino - ").Append(title).Append(@"</title>
+<link rel=""Stylesheet"" type=""text/css"" href=""/Content/Style.css"" />
+</head>
+<body style=""background: #").Append(background).Append(background).Append(background).Append(@""">
+<div class=""WRAPPER"">
+<div class=""BANNER"">
+    <div class=""STATS_PANEL"">
+        <div><b>System time:</b> ").Append(Program.currentTime).Append(@"</div>
+        <div><b>Temperature:</b> ").Append(Program.temperature).Append(@"°C</div>
+        <div><b>Light:</b> ").Append(Program.light).Append(@"%</div>
+    </div>
+	<img src=""/Content/Banner.png"" alt=""Evilduino Logo"" />
+	<div class=""clear""></div>
+</div>
+<div class=""NAV"">
+    <a href=""/home"">Home</a>
+	<div>Runtime Management:</div>
+	<a href=""/settings"">Settings</a>
+    <a href=""/files"">Files</a>		
+
+	<div>Computing Tools</div>
+	<a href=""/computing/bases"">Convert Bases</a>
+	<a href=""/computing/matrices"">Matrix Multiplier</a>
+    <a href=""/computing/euler"">Project Euler</a>
+    <a href=""/computing/euler"">Solve 3D Linear System</a>
+		
+	<div>Evilduino</div>
+    <a href=""/evilduino/about"">About</a>
+    <a href=""/evilduino/guestbook"">Guestbook</a>
+		
+	<div>Porn Tools</div>
+	<a href=""/redtube"">Random Redtube Vidya</a>
+	<a href=""http://motherless.com/random/video"">Random Motherless Vidya</a>
+	<a href=""/fapgame"">Random Fap Game</a>
+</div>
+<div class=""CONTENT"">
+        <h1>").Append(title).Append(@"</h1>
+");
+        }
+        public static void writePage_Footer(HttpRequest request, HttpResponse response)
+        {
+            response.buffer.Append(
+@"
+</div>
+<div class=""FOOTER"">
+	<b>Uptime:</b> ").Append(DateTime.Now.Subtract(startTime).ToString()).Append(@"
+	<b>Version:</b>1.0.0.evil
+	<a href=""http://www.ubermeat.co.uk/"">Ubermeat</a>
+	<a href=""").Append(Program.github).Append(@""">Github</a>
+</div>
+<div class=""clear""></div>
+</div>
+<div class=""FOOTER_NOTES"">
+<p>Creative Commons Attribution-ShareAlike 3.0 unported</p>
+</div>
+</body>
+</html>
+");
+        }
+        #endregion
+
+        static int tryParse(string value, int failValue)
+        {
+            if (value == null) return failValue;
+            for (int i = 0; i < value.Length; i++)
+                if (value[i] < 48 || value[i] > 57)
+                    return failValue;
+            return int.Parse(value);
+        }
+        // NEEDS (char)Convert.ToInt32(new string(chars), 16) added !!!!
+        static string urlDecode(string value, bool htmlProtection)
+        {
+            StringBuilder sb = new StringBuilder(value);
+            sb.Replace("+", " ");
+            value = null;
+            int index = 0;
+            while (true)
+            {
+                if (index >= sb.Length) break;
+                if (sb[index] == '%' && sb.Length - index > 2 && (((sb[index + 1] >= 48 && sb[index + 1] <= 57) || (sb[index + 1] >= 65 && sb[index + 1] <= 70)) && ((sb[index + 2] >= 48 && sb[index + 2] <= 57) || (sb[index + 2] >= 65 && sb[index + 2] <= 70))))
+                {
+                    // Get the hex char and replace the 3 chars with it
+                    sb[index] = convertHexToChar(new char[] { sb[index + 1], sb[index + 2] });
+                    sb.Remove(index + 1, 2);
+                }
+                index++;
+            }
+            if (htmlProtection)
+            {
+                sb.Replace("<", "&lt;");
+                sb.Replace(">", "&gt;");
+                sb.Replace("\r", "");
+                sb.Replace("\n", "<br />");
+            }
+            return sb.ToString();
+        }
         static void handleUploadData(ref bool fileNameOverflow, ref bool dataOverflow, ref char[] sChunk, ref StreamWriter sw, ref string filename, ref char[] urlEncodeOverflow)
         {
             if (fileNameOverflow)
@@ -1108,105 +1220,6 @@ namespace BinaryClock
                     break;
                 else
                     sb.Append(chars[i]);
-            return sb.ToString();
-        }
-        #endregion
-
-        #region "Methods - Site Template"
-        public static void writePage_Header(HttpRequest request, HttpResponse response, string title)
-        {
-            string background = ((int)(Program.light / 100 * 255)).ToString("X");
-            response.buffer.Append(
-@"
-<!DOCTYPE html PUBLIC ""-//W3C//DTD XHTML 1.0 Strict//EN"" ""http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"">
-<html xmlns=""http://www.w3.org/1999/xhtml"">
-<head>
-<title>Evilduino - ").Append(title).Append(@"</title>
-<link rel=""Stylesheet"" type=""text/css"" href=""/Content/Style.css"" />
-</head>
-<body style=""background: #").Append(background).Append(background).Append(background).Append(@""">
-<div class=""WRAPPER"">
-<div class=""BANNER"">
-    <div class=""STATS_PANEL"">
-        <div><b>System time:</b> ").Append(Program.currentTime).Append(@"</div>
-        <div><b>Temperature:</b> ").Append(Program.temperature).Append(@"°C</div>
-        <div><b>Light:</b> ").Append(Program.light).Append(@"%</div>
-    </div>
-	<img src=""/Content/Banner.png"" alt=""Evilduino Logo"" />
-	<div class=""clear""></div>
-</div>
-<div class=""NAV"">
-    <a href=""/home"">Home</a>
-	<div>Runtime Management:</div>
-	<a href=""/settings"">Settings</a>
-    <a href=""/upload"">Upload</a>
-    <a href=""/files"">Files</a>		
-
-	<div>Computing Tools</div>
-	<a href=""/computing/bases"">Convert Bases</a>
-	<a href=""/computing/matrices"">Matrix Multiplier</a>
-    <a href=""/computing/euler"">Project Euler</a>
-		
-	<div>Evilduino</div>
-    <a href=""/evilduino/about"">About</a>
-    <a href=""/evilduino/guestbook"">Guestbook</a>
-		
-	<div>Porn Tools</div>
-	<a href=""/redtube"">Random Redtube Vidya</a>
-	<a href=""http://motherless.com/random/video"">Random Motherless Vidya</a>
-	<a href=""/fapgame"">Random Fap Game</a>
-</div>
-<div class=""CONTENT"">
-        <h1>").Append(title).Append(@"</h1>
-");
-        }
-        public static void writePage_Footer(HttpRequest request, HttpResponse response)
-        {
-            response.buffer.Append(
-@"
-</div>
-<div class=""FOOTER"">
-	<b>Uptime:</b> ").Append(DateTime.Now.Subtract(startTime).ToString()).Append(@"
-	<b>Version:</b>1.0.0.evil
-	<a href=""http://www.ubermeat.co.uk/"">Ubermeat</a>
-	<a href=""").Append(Program.github).Append(@""">Github</a>
-</div>
-<div class=""clear""></div>
-</div>
-<div class=""FOOTER_NOTES"">
-<p>Creative Commons Attribution-ShareAlike 3.0 unported</p>
-</div>
-</body>
-</html>
-");
-        }
-        #endregion
-
-        static int tryParse(string value, int failValue)
-        {
-            if (value == null) return failValue;
-            for (int i = 0; i < value.Length; i++)
-                if (value[i] < 48 || value[i] > 57)
-                    return failValue;
-            return int.Parse(value);
-        }
-        // NEEDS (char)Convert.ToInt32(new string(chars), 16) added !!!!
-        static string urlDecode(string value)
-        {
-            StringBuilder sb = new StringBuilder(value);
-            value = null;
-            sb
-                .Replace("%0D", "\r")
-                .Replace("%0A", "\n")
-                .Replace("%7B", "{")
-                .Replace("%09", "\t")
-                .Replace("%3A", ":")
-                .Replace("%3B", ";")
-                .Replace("%7D", "}")
-                .Replace("+", " ")
-                .Replace("%23", "#")
-                .Replace("%2C", ",")
-                .Replace("%21", "!");
             return sb.ToString();
         }
     }
