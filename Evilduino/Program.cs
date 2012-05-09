@@ -112,25 +112,32 @@ namespace BinaryClock
             OutputPort buzzer = new OutputPort(Pins.GPIO_PIN_D6, false);
             while (true)
             {
-                // Check if the alarm time has been surpassed
-                if (currentTime >= alarm)
+                try
                 {
-                    // Reset the alarm
-                    alarm = DateTime.MaxValue;
-                    // Sound the buzzer for two minutes
-                    bool canFlash = !lightsModeLocked;
-                    if (canFlash) lightsModeLocked = true;
-                    for (int i = 0; i < 120; i++)
+                    // Check if the alarm time has been surpassed
+                    if (currentTime >= alarm)
                     {
-                        buzzer.Write(i %  2 == 0);
-                        if (canFlash) lightsMode = (i % 2 == 0 ? lightsModeAlarmBuzzA : lightsModeAlarmBuzzB);
-                        Thread.Sleep(1000);
+                        // Reset the alarm
+                        alarm = DateTime.MaxValue;
+                        // Sound the buzzer for two minutes
+                        bool canFlash = !lightsModeLocked;
+                        if (canFlash) lightsModeLocked = true;
+                        for (int i = 0; i < 120; i++)
+                        {
+                            buzzer.Write(i % 2 == 0);
+                            if (canFlash) lightsMode = (i % 2 == 0 ? lightsModeAlarmBuzzA : lightsModeAlarmBuzzB);
+                            Thread.Sleep(1000);
+                        }
+                        if (canFlash)
+                        {
+                            lightsModeLocked = false;
+                            lightsMode = LightsMode.Time;
+                        }
                     }
-                    if (canFlash)
-                    {
-                        lightsModeLocked = false;
-                        lightsMode = LightsMode.Time;
-                    }
+                }
+                catch(Exception ex)
+                {
+                    log.write("Critical malfunction occurred in alarmThread '" + ex.Message + "'!");
                 }
                 Thread.Sleep(1000);
             }
@@ -173,78 +180,85 @@ namespace BinaryClock
             int second;
             while (true)
             {
-                // Update sensor data
-                temperature = sensorTemp.Read() / 10; // Probably inaccurate...due to using 5v.../10 is good :D
-                light = (float)System.Math.Round(((float)sensorLight.Read() / 1023.0f) * 100.0f);
-                tilt = ((float)sensorTilt.Read() / 1023.0f);
-                // Update overall lighting based on light threshold
-                if (!lightsModeLocked)
+                try
                 {
-                    if (light <= lightModeDarkThreshold)
-                    { if (lightsMode != lightsModeDark) lightsMode = lightsModeDark; }
-                    else if (lightsMode != lightsModeLight) lightsMode = lightsModeLight;
+                    // Update sensor data
+                    temperature = sensorTemp.Read() / 10; // Probably inaccurate...due to using 5v.../10 is good :D
+                    light = (float)System.Math.Round(((float)sensorLight.Read() / 1023.0f) * 100.0f);
+                    tilt = ((float)sensorTilt.Read() / 1023.0f);
+                    // Update overall lighting based on light threshold
+                    if (!lightsModeLocked)
+                    {
+                        if (light <= lightModeDarkThreshold)
+                        { if (lightsMode != lightsModeDark) lightsMode = lightsModeDark; }
+                        else if (lightsMode != lightsModeLight) lightsMode = lightsModeLight;
+                    }
+                    // Update lights based on mode
+                    second = currentTime.Second;
+                    switch (lightsMode)
+                    {
+                        case LightsMode.Time:
+                            hour = valueToBooleanBinary(currentTime.Hour, 5);
+                            min = valueToBooleanBinary(currentTime.Minute, 6);
+                            sec = valueToBooleanBinary(second, 6);
+                            ta = tb = 0;
+                            // -- Hours
+                            if (hour[0]) ta += 64;
+                            if (hour[1]) ta += 128;
+                            if (hour[2]) ta += 2;
+                            if (hour[3]) ta += 8;
+                            if (hour[4]) tb += 4;
+                            // -- Mins
+                            if (min[0]) tb += 2;
+                            if (min[1]) ta += 1;
+                            if (min[2]) tb += 1;
+                            if (min[3]) tb += 16;
+                            if (min[4]) ta += 16;
+                            if (min[5]) ta += 4;
+                            // -- Secs
+                            if (sec[0]) tb += 128;
+                            if (sec[1]) tb += 64;
+                            if (sec[2]) tb += 32;
+                            totalD7 = sec[3];
+                            if (sec[4]) tb += 8;
+                            if (sec[5]) ta += 32;
+                            totalA = ta;
+                            totalB = tb;
+                            break;
+                        case LightsMode.AllOff:
+                            totalA = 0;
+                            totalB = 0;
+                            totalD7 = false;
+                            break;
+                        case LightsMode.AllOn:
+                            totalA = 255;
+                            totalB = 255;
+                            totalD7 = true;
+                            break;
+                        case LightsMode.Blue:
+                            totalA = 72;
+                            totalB = 146;
+                            totalD7 = true;
+                            break;
+                        case LightsMode.Green:
+                            totalA = 145;
+                            totalB = 76;
+                            totalD7 = false;
+                            break;
+                        case LightsMode.Red:
+                            totalA = 38;
+                            totalB = 33;
+                            totalD7 = false;
+                            break;
+                    }
+                    // Sleep....until the time changes
+                    while (currentTime.Second == second) Thread.Sleep(50);
                 }
-                // Update lights based on mode
-                second = currentTime.Second;
-                switch (lightsMode)
+                catch(Exception ex)
                 {
-                    case LightsMode.Time:
-                        hour = valueToBooleanBinary(currentTime.Hour, 5);
-                        min = valueToBooleanBinary(currentTime.Minute, 6);
-                        sec = valueToBooleanBinary(second, 6);
-                        ta = tb = 0;
-                        // -- Hours
-                        if (hour[0]) ta += 64;
-                        if (hour[1]) ta += 128;
-                        if (hour[2]) ta += 2;
-                        if (hour[3]) ta += 8;
-                        if (hour[4]) tb += 4;
-                        // -- Mins
-                        if (min[0]) tb += 2;
-                        if (min[1]) ta += 1;
-                        if (min[2]) tb += 1;
-                        if (min[3]) tb += 16;
-                        if (min[4]) ta += 16;
-                        if (min[5]) ta += 4;
-                        // -- Secs
-                        if (sec[0]) tb += 128;
-                        if (sec[1]) tb += 64;
-                        if (sec[2]) tb += 32;
-                        totalD7 = sec[3];
-                        if (sec[4]) tb += 8;
-                        if (sec[5]) ta += 32;
-                        totalA = ta;
-                        totalB = tb;
-                        break;
-                    case LightsMode.AllOff:
-                        totalA = 0;
-                        totalB = 0;
-                        totalD7 = false;
-                        break;
-                    case LightsMode.AllOn:
-                        totalA = 255;
-                        totalB = 255;
-                        totalD7 = true;
-                        break;
-                    case LightsMode.Blue:
-                        totalA = 72;
-                        totalB = 146;
-                        totalD7 = true;
-                        break;
-                    case LightsMode.Green:
-                        totalA = 145;
-                        totalB = 76;
-                        totalD7 = false;
-                        break;
-                    case LightsMode.Red:
-                        totalA = 38;
-                        totalB = 33;
-                        totalD7 = false;
-                        break;
+                    log.write("Critical malfunction occurred in calculationsThread: '" + ex.Message + "'!");
+                    Thread.Sleep(1000);
                 }
-                // Sleep....until the time changes
-                while (currentTime.Second == second) Thread.Sleep(50);
-                
             }
         }
         static bool totalD7 = false;    // Pin 7 light
@@ -267,8 +281,15 @@ namespace BinaryClock
             SPI dp = new SPI(spiConfig);
             while (true)
             {
-                dp.Write(new byte[] { (byte)totalA, (byte)totalB });
-                d7.Write(totalD7);
+                try
+                {
+                    dp.Write(new byte[] { (byte)totalA, (byte)totalB });
+                    d7.Write(totalD7);
+                }
+                catch(Exception ex)
+                {
+                    log.write("Critical malfunction occurred in lightsThread '" + ex.Message + "'!");
+                }
                 Thread.Sleep(1000);
             }
         }
@@ -371,8 +392,12 @@ namespace BinaryClock
         }
         public void dispose()
         {
-            fs.Close();
-            fs.Dispose();
+            try
+            {
+                fs.Close();
+                fs.Dispose();
+            }
+            catch { }
         }
         public void write(string desc)
         {
@@ -401,22 +426,133 @@ namespace BinaryClock
         #region "Settings"
         public const int port = 81;
         public const int maxClientData = 1024;
+        public const int responseChunkSize = 512;
+        public const int contentChunkSize = 512;
         public const int allowedIpRange = 10; // 10.x.x.x IP addresses will have special privileges
+        public const int concurrentThreads = 1;
         #endregion
 
         #region "Variables"
         public static DateTime startTime;
         public static Logger log;
         public static bool webserverEnabled = true;
+        public static ArrayList requests;
+        public static ArrayList threads;
         #endregion
 
-        #region "Methods"
+        #region "Methods - Request Handling"
+        public static void threadDelegator()
+        {
+            Thread th;
+            Socket client;
+            int threadOffset;
+            while (true)
+            {
+                lock (threads)
+                {
+                    lock (requests)
+                    {
+                        // Pop any dead threads
+                        threadOffset = 0;
+                        while (threadOffset < threads.Count)
+                        {
+                            th = (Thread)threads[threadOffset];
+                            if (th.ThreadState == ThreadState.Stopped)
+                            {
+                                // Ensure the thread has been aborted
+                                try { th.Abort(); }
+                                catch { }
+                                // Pop the thread from the array
+                                threads.RemoveAt(threadOffset);
+                            }
+                            else
+                                threadOffset++; // No thread remove, check the next item
+                        }
+                        // Add new threads
+                        if (threads.Count < concurrentThreads && requests.Count > 0)
+                        { // Attempt to add every possible request at once
+                            for (int i = 0; i < System.Math.Min(concurrentThreads - threads.Count, requests.Count); i++)
+                            {
+                                client = (Socket)requests[0]; // It will always be zero since we always remove the first item after use
+                                requests.RemoveAt(i);
+                                th = new Thread(new ThreadStart(
+                                    delegate()
+                                    {
+                                        threadHandler(client);
+                                    }));
+                                th.Start();
+                                threads.Add(th);
+                            }
+                        }
+                        // Dispose resources for this cycle
+                        th = null;
+                    }
+                }
+                // Sleep to avoid hogging and to allow new requests to be added...
+                Thread.Sleep(50);
+            }
+        }
+        public static void threadHandler(Socket client)
+        {
+            HttpRequest request = new HttpRequest();
+            HttpResponse response = new HttpResponse(((IPEndPoint)client.RemoteEndPoint).Address.ToString());
+            try
+            {
+                // Hnadle the request data
+                handleRequest(client, ref request, ref response);
+                if (request.requestedPath != null) // Check the request was valid
+                {
+                    // Delegate the requested
+                    request.requestDirs = request.requestedPath.Split('/');
+                    log.write("Request from '" + request.clientP.Address + ":" + request.clientP.Port + "', path: '" + (request.requestedPath ?? "not specified") + "' [" + (request.requestDirs.Length > 0 ? "page__" + request.requestDirs[0] : "none") + "] !");
+                    if (request.requestedPath.Length == 0)
+                        try
+                        {
+                            page__home(request, response);
+                        }
+                        catch { }
+                    else
+                        try
+                        {
+                            typeof(Webserver).GetMethod("page__" + request.requestDirs[0].ToLower()).Invoke(null, new object[] { request, response });
+                        }
+                        catch (NullReferenceException)
+                        {
+                            Debug.Print("404 invoked");
+                            page__404(request, response);
+                        }
+                    // Send the data to the client
+                    if (response.contentLength == 0)
+                        try { response.finalize(true); } catch { }
+                }
+                response.buffer.dispose();
+            }
+            catch (Exception ex)
+            {
+                log.write("Thread delegator error occurred: " + ex.Message);
+                try
+                { // Attempt to inform the user
+                    client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 56\r\nConnection: close\r\n\r\nAn error occurred...prolly ran out of memory lulz ;_;..."));
+                }
+                catch { }
+            }
+        }
+        /// <summary>
+        /// Responsible for launching the web-server and listening for requests.
+        /// </summary>
         public static void initServer()
         {
             log = new Logger(Program.logWebserver);
             log.writeSeparator();
+            Thread threadDel = null;
             try
             {
+                // Create the thread-pool and thread-delegator for handling requests
+                requests = new ArrayList();
+                threads = new ArrayList();
+                threadDel = new Thread(new ThreadStart(threadDelegator));
+                threadDel.Start();
+                // Create the socket to listen for requests
                 Socket sock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 sock.Bind(new IPEndPoint(IPAddress.Any, port));
                 log.write("Binded to '" + Microsoft.SPOT.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()[0].IPAddress + ":" + port + "'!");
@@ -429,47 +565,8 @@ namespace BinaryClock
                     {
                         // Accept the socket
                         client = sock.Accept();
-                        client.SendTimeout = 1000;
-                        HttpRequest request = new HttpRequest();
-                        HttpResponse response = new HttpResponse(((IPEndPoint)client.RemoteEndPoint).Address.ToString());
-                        try
-                        {
-                            // Hnadle the request data
-                            handleRequest(client, ref request, ref response);
-                            if (request.requestedPath != null) // Check the request was valid
-                            {
-                                // Delegate the requested
-                                request.requestDirs = request.requestedPath.Split('/');
-                                log.write("Request from '" + request.clientP.Address + ":" + request.clientP.Port + "', path: '" + (request.requestedPath ?? "not specified") + "' [" + (request.requestDirs.Length > 0 ? "page__" + request.requestDirs[0] : "none") + "] !");
-                                if (request.requestedPath.Length == 0)
-                                    page__home(request, response);
-                                else
-                                    try
-                                    {
-                                        typeof(Webserver).GetMethod("page__" + request.requestDirs[0].ToLower()).Invoke(null, new object[] { request, response });
-                                    }
-                                    catch (NullReferenceException)
-                                    {
-                                        Debug.Print("404 invoked");
-                                        page__404(request, response);
-                                    }
-                                // Send the data to the client
-                                if (response.contentLength == 0) response.finalize(true);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            log.write("Error occurred: " + ex.Message);
-                            try
-                            { // Attempt to inform the user
-                                client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 56\r\nConnection: close\r\n\r\nAn error occurred...prolly ran out of memory lulz ;_;..."));
-                            }
-                            catch { }
-                        }
-                        finally
-                        {
-                            response.buffer.dispose();
-                        }
+                        client.SendTimeout = 500;
+                        requests.Add(client);
                     }
                     catch (Exception ex)
                     {
@@ -482,13 +579,23 @@ namespace BinaryClock
                     }
                 }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 log.write("Webserver failed (" + ex.Message + "), reinitializing....");
                 initServer();
             }
+            finally
+            {
+                threadDel.Abort();
+            }
             log.dispose();
         }
+        /// <summary>
+        /// Responsible for parsing the request, ready for delegation.
+        /// </summary>
+        /// <param name="client"></param>
+        /// <param name="request"></param>
+        /// <param name="response"></param>
         public static void handleRequest(Socket client, ref HttpRequest request, ref HttpResponse response)
         { // We use this as a separate method so every variable inside of here will be free for garbage collection - more efficient
             response.client = client;
@@ -649,12 +756,12 @@ namespace BinaryClock
                 response.finalize(false);
                 try
                 {
-                    const int chunkSize = 512;
+                    
                     byte[] data;
-                    for (int bytesRead = 0; bytesRead < fs.Length; bytesRead += chunkSize)
+                    for (int bytesRead = 0; bytesRead < fs.Length; bytesRead += contentChunkSize)
                     {
-                        data = new byte[chunkSize];
-                        fs.Read(data, 0, chunkSize);
+                        data = new byte[contentChunkSize];
+                        fs.Read(data, 0, contentChunkSize);
                         response.client.Send(data);
                     }
                     data = null;
@@ -1011,6 +1118,12 @@ namespace BinaryClock
         #endregion
 
         #region "Methods - Site Template"
+        /// <summary>
+        /// Appends the header of the global template.
+        /// </summary>
+        /// <param name="request"></param>
+        /// <param name="response"></param>
+        /// <param name="title"></param>
         public static void writePage_Header(HttpRequest request, HttpResponse response, string title)
         {
             string background = ((int)(Program.light / 100 * 255)).ToString("X");
@@ -1058,6 +1171,11 @@ namespace BinaryClock
         <h1>").Append(title).Append(@"</h1>
 ");
         }
+        /// <summary>
+        /// Appends the footer of the global template.
+        /// </summary>
+        /// <param name="request"></param>
+        /// <param name="response"></param>
         public static void writePage_Footer(HttpRequest request, HttpResponse response)
         {
             response.buffer.Append(
@@ -1080,6 +1198,13 @@ namespace BinaryClock
         }
         #endregion
 
+        #region "Methods"
+        /// <summary>
+        /// Attempts to parse a string as an integer, else it returns the specified failValue substitute.
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="failValue"></param>
+        /// <returns></returns>
         static int tryParse(string value, int failValue)
         {
             if (value == null) return failValue;
@@ -1088,7 +1213,12 @@ namespace BinaryClock
                     return failValue;
             return int.Parse(value);
         }
-        // NEEDS (char)Convert.ToInt32(new string(chars), 16) added !!!!
+        /// <summary>
+        /// Decodes a URL-encoded string.
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="htmlProtection"></param>
+        /// <returns></returns>
         static string urlDecode(string value, bool htmlProtection)
         {
             StringBuilder sb = new StringBuilder(value);
@@ -1115,6 +1245,16 @@ namespace BinaryClock
             }
             return sb.ToString();
         }
+        /// <summary>
+        /// Handles the data of a POST request for the method page__upload; this currently extracts the values for the
+        /// fields "filename" and "data".
+        /// </summary>
+        /// <param name="fileNameOverflow"></param>
+        /// <param name="dataOverflow"></param>
+        /// <param name="sChunk"></param>
+        /// <param name="sw"></param>
+        /// <param name="filename"></param>
+        /// <param name="urlEncodeOverflow"></param>
         static void handleUploadData(ref bool fileNameOverflow, ref bool dataOverflow, ref char[] sChunk, ref StreamWriter sw, ref string filename, ref char[] urlEncodeOverflow)
         {
             if (fileNameOverflow)
@@ -1171,6 +1311,13 @@ namespace BinaryClock
                 }
             }
         }
+        /// <summary>
+        /// Decodes URL-encoded text with the ability to detect cut-off encoded chars, which are placed into an overflow array;
+        /// this array can then be used when the method is invoked again.
+        /// </summary>
+        /// <param name="chars"></param>
+        /// <param name="urlEncodeOverflow"></param>
+        /// <returns></returns>
         static char[] urlDecodeWithOverflow(char[] chars, ref char[] urlEncodeOverflow)
         {
             StringBuilder sb = new StringBuilder((urlEncodeOverflow != null && urlEncodeOverflow.Length > 0 ? new string(urlEncodeOverflow) : string.Empty) + new string(chars));
@@ -1202,16 +1349,38 @@ namespace BinaryClock
             }
             return sb.ToString().ToCharArray();
         }
+        /// <summary>
+        /// Converts a char-array of hex-values to an integer; for instance
+        /// you might pass new char[]{ '0', 'A' }, which would become 10.
+        /// </summary>
+        /// <param name="chars"></param>
+        /// <returns></returns>
         static char convertHexToChar(char[] chars)
         {
             return (char)Convert.ToInt32(new string(chars), 16);
         }
+        /// <summary>
+        /// Returns the index, starting at zero, of the first occurrence of a char found - when going left to right.
+        /// </summary>
+        /// <param name="chars"></param>
+        /// <param name="charr"></param>
+        /// <param name="startIndex"></param>
+        /// <returns></returns>
         static int indexOf(ref char[] chars, char charr, int startIndex = 0)
         {
             for (int i = startIndex; i < chars.Length; i++)
                 if (chars[i] == charr) return i;
             return -1;
         }
+        /// <summary>
+        /// Returns the string for a specified range of a char-array, with the ability to terminate the string
+        /// before a specified abortChar.
+        /// </summary>
+        /// <param name="chars"></param>
+        /// <param name="index"></param>
+        /// <param name="length"></param>
+        /// <param name="abortChar"></param>
+        /// <returns></returns>
         static string substring(ref char[] chars, int index = 0, int length = 0, char abortChar = '&')
         {
             StringBuilder sb = new StringBuilder();
@@ -1222,7 +1391,11 @@ namespace BinaryClock
                     sb.Append(chars[i]);
             return sb.ToString();
         }
+        #endregion
     }
+    /// <summary>
+    /// A data-structure to represent information of a HTTP request.
+    /// </summary>
     public class HttpRequest
     {
         /// <summary>
@@ -1266,6 +1439,9 @@ namespace BinaryClock
                 lastKey = key;
             }
         }
+        /// <summary>
+        /// The last POST field key-name inserted into the formData hashtable.
+        /// </summary>
         public string lastKey = null;
         /// <summary>
         /// Useful for methods to clear unused memory.
@@ -1280,6 +1456,9 @@ namespace BinaryClock
             }
         }
     }
+    /// <summary>
+    /// A data-structure to handle the response of a HTTP request.
+    /// </summary>
     public class HttpResponse
     {
         #region "Enums"
@@ -1385,14 +1564,13 @@ namespace BinaryClock
             header = null;
             if (sendContent)
             {
-                const int chunkSize = 256;
-                char[] chars = new char[chunkSize];
+                char[] chars = new char[Webserver.responseChunkSize];
                 int length;
                 byte[] chunk;
                 buffer.beginRead();
-                for (int i = 0; i < buffer.Length; i += chunkSize)
+                for (int i = 0; i < buffer.Length; i += Webserver.responseChunkSize)
                 {
-                    length = buffer.Length - (i + chunkSize) > 0 ? chunkSize : buffer.Length - i;
+                    length = buffer.Length - (i + Webserver.responseChunkSize) > 0 ? Webserver.responseChunkSize : buffer.Length - i;
                     chunk = new byte[length];
                     buffer.read(chunk, 0, chunk.Length);
                     client.Send(chunk);
@@ -1400,16 +1578,22 @@ namespace BinaryClock
                 client.Close();
                 chars = null;
                 chunk = null;
-                buffer = null;
             }
         }
         #endregion
     }
+    /// <summary>
+    /// A replacement of StringBuilder with similar functionality, except it uses paged memory (opposed to RAM) for buffer storage.
+    /// </summary>
     public class PagedStringBuilder
     {
         string path;
         FileStream fs;
         StreamWriter sw;
+        /// <summary>
+        /// Creates a new instance of a paged-memory StringBuilder.
+        /// </summary>
+        /// <param name="ipSeed">The IP of the HTTP request; this is used to avoid temp file collisions.</param>
         public PagedStringBuilder(string ipSeed)
         {
             if (!Directory.Exists("\\SD\\PagedCache")) Directory.CreateDirectory("\\SD\\PagedCache");
@@ -1441,28 +1625,41 @@ namespace BinaryClock
             sw.Flush();
             return this;
         }
+        /// <summary>
+        /// Returns the length/total number of bytes in the file.
+        /// </summary>
         public int Length
         {
             get { return (int)fs.Length; }
         }
         /// <summary>
-        /// This must be called before reading - in-order to reset the position of where we're reading from within the file.
+        /// This must be called before reading, in-order to reset the position of where we're reading from within the file.
         /// </summary>
         public void beginRead()
         {
             fs.Position = 0;
         }
+        /// <summary>
+        /// Reads from the paged-cache at the specified location and length; warning: you should recall this method with an offset of 0;
+        /// to restart reading from the start of the file, invoke beginRead and specify an offset.
+        /// </summary>
+        /// <param name="buffer"></param>
+        /// <param name="offset"></param>
+        /// <param name="length"></param>
+        /// <returns></returns>
         public int read(byte[] buffer, int offset, int length)
         {
             return fs.Read(buffer, offset, length);
         }
+        /// <summary>
+        /// Disposes the paged-memory.
+        /// </summary>
         public void dispose()
         { // We use lots of try-catch's just in-case one fails...it's worth at least trying to delete the file, else this could cause storage issues
-            try { sw.Close(); } catch { }
             try { sw.Dispose(); } catch { }
             try { fs.Close(); } catch { }
             try { fs.Dispose(); } catch { }
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); } catch { throw new Exception("Failed to delete cache file '" + path + "'!"); }
         }
     }
 }
