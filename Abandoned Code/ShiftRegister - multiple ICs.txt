@@ -1,0 +1,60 @@
+    public class ShiftRegister_74HC595
+    {
+        private OutputPort latch;
+        private OutputPort clock;
+        private OutputPort data;
+        public bool[] Outputs;
+        public ShiftRegister_74HC595(int numberOfRegisters, Cpu.Pin latch = Pins.GPIO_PIN_D10, Cpu.Pin clock = Pins.GPIO_PIN_D13, Cpu.Pin data = Pins.GPIO_PIN_D11)
+        {
+            if (numberOfRegisters < 1) throw new ArgumentOutOfRangeException("You must use at least one shift-register!");
+            Outputs = new bool[numberOfRegisters * 8];
+            this.latch = new OutputPort(latch, false);
+            this.clock = new OutputPort(clock, false);
+            this.data = new OutputPort(data, false);
+        }
+        public bool this[int index]
+        {
+            get
+            {
+                if (index >= Outputs.Length) throw new ArgumentOutOfRangeException("ShiftRegister_74HC595 - get - index '" + index + "' out of range!");
+                return Outputs[index];
+            }
+            set
+            {
+                if (index >= Outputs.Length) throw new ArgumentOutOfRangeException("ShiftRegister_74HC595 - set - index '" + index + "' out of range!");
+                Outputs[index] = value;
+            }
+        }
+        public void setAll(bool value)
+        {
+            for (int i = 0; i < Outputs.Length; i++) Outputs[i] = value;
+        }
+        public void output()
+        {
+            latch.Write(false);
+            for (int i = Outputs.Length; i > 0; i--)
+            {
+                data.Write(Outputs[i - 1]);
+                clock.Write(true);
+                Thread.Sleep(1);
+                clock.Write(false);
+            }
+            latch.Write(true);
+        }
+        public void dispose()
+        {
+            latch.Dispose();
+            latch = null;
+            clock.Dispose();
+            clock = null;
+            data.Dispose();
+            data = null;
+        }
+        public string debug()
+        {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < Outputs.Length; i++)
+                sb.Append(i + " : " + Outputs[i]).Append("\n");
+            return sb.ToString();
+        }
+    }
