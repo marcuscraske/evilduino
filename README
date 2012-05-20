@@ -30,5 +30,16 @@ the Netduino Plus as the main-board.
 
 Change-log
 ============================================================================
+v1.1.0:
+- Added change-log page.
+- Worked on the guest-book a little more.
+- Modified the home-page.
+- Added a Lighting page to settings to change the lighting via the web.
+- Added a configuration class, which is used to store settings such as the lighting.
+- Added a love-heart light state.
+- Adjusted timeout of requests to 1500 m/s.
+- Adjusted the layout of the set alarm page and made it only add 8 hrs if no alarm had been set for the initial field values.
+- Changed the system-time and up-time on the global template to be more human-readable.
+- Changed default cache-control interval to 10 seconds.
 v1.0.0:
 - Created Git repository.

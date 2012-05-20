@@ -34,12 +34,13 @@ namespace BinaryClock
         #region "Enums"
         public enum LightsMode
         {
-            Time,
-            AllOn,
-            AllOff,
-            Red,
-            Green,
-            Blue
+            Time = 1,
+            AllOn = 2,
+            AllOff = 3,
+            Red = 4,
+            Green = 5,
+            Blue = 6,
+            LoveHeart = 7
         }
         #endregion
 
@@ -47,10 +48,12 @@ namespace BinaryClock
         public const String github = "https://github.com/ubermeat/evilduino";
         public const String logClock = "SD\\Log_Clock.txt";
         public const String logWebserver = "SD\\Log_Webserver.txt";
+        public const String configFile = "SD\\Settings.config";
         #endregion
 
         #region "Variables"
         public static DateTime currentTime = new DateTime();
+        public static DateTime timeLastUpdated = DateTime.MinValue;
         public static bool timeNeedsUpdating = false;
         public static bool testMode = false;
         public static Logger log;
@@ -73,6 +76,8 @@ namespace BinaryClock
             log = new Logger(logClock);
             log.writeSeparator();
             log.write("Initialized logger...");
+            // Begin loading configuration
+            loadConfiguraiton();
             // Grab the latest time
             updateTime();
             // Launch secondary thread to handle the lighting
@@ -109,7 +114,10 @@ namespace BinaryClock
         }
         public static void alarmThread()
         {
+            SecretLabs.NETMF.Hardware.AnalogInput switchButton = new SecretLabs.NETMF.Hardware.AnalogInput(Pins.GPIO_PIN_A3); // Used to mute the alarm
             OutputPort buzzer = new OutputPort(Pins.GPIO_PIN_D6, false);
+            bool currentState = switchButton.Read() == 1024; // False for low (< 1024) or true for high
+            int reading;
             while (true)
             {
                 try
@@ -122,17 +130,29 @@ namespace BinaryClock
                         // Sound the buzzer for two minutes
                         bool canFlash = !lightsModeLocked;
                         if (canFlash) lightsModeLocked = true;
-                        for (int i = 0; i < 120; i++)
+                        for (int i = 0; i < 120000; i++)
                         {
+                            // Set the buzzer
                             buzzer.Write(i % 2 == 0);
+                            // Set the lighting state
                             if (canFlash) lightsMode = (i % 2 == 0 ? lightsModeAlarmBuzzA : lightsModeAlarmBuzzB);
+                            // Check if the button state has changed - hence turn off the alarm
+                            reading = switchButton.Read();
+                            if ((currentState && reading < 200) || (!currentState && reading == 1024))
+                            {
+                                currentState = !currentState;
+                                break;
+                            }
                             Thread.Sleep(1000);
                         }
+                        // Restore lighting
                         if (canFlash)
                         {
                             lightsModeLocked = false;
                             lightsMode = LightsMode.Time;
                         }
+                        // Ensure the buzzer is disabled
+                        buzzer.Write(false);
                     }
                 }
                 catch(Exception ex)
@@ -180,85 +200,82 @@ namespace BinaryClock
             int second;
             while (true)
             {
-                try
+                // Update sensor data
+                temperature = sensorTemp.Read() / 10; // Probably inaccurate...due to using 5v.../10 is good :D
+                light = (float)System.Math.Round(((float)sensorLight.Read() / 1023.0f) * 100.0f);
+                tilt = ((float)sensorTilt.Read() / 1023.0f);
+                // Update overall lighting based on light threshold
+                if (!lightsModeLocked)
                 {
-                    // Update sensor data
-                    temperature = sensorTemp.Read() / 10; // Probably inaccurate...due to using 5v.../10 is good :D
-                    light = (float)System.Math.Round(((float)sensorLight.Read() / 1023.0f) * 100.0f);
-                    tilt = ((float)sensorTilt.Read() / 1023.0f);
-                    // Update overall lighting based on light threshold
-                    if (!lightsModeLocked)
-                    {
-                        if (light <= lightModeDarkThreshold)
-                        { if (lightsMode != lightsModeDark) lightsMode = lightsModeDark; }
-                        else if (lightsMode != lightsModeLight) lightsMode = lightsModeLight;
-                    }
-                    // Update lights based on mode
-                    second = currentTime.Second;
-                    switch (lightsMode)
-                    {
-                        case LightsMode.Time:
-                            hour = valueToBooleanBinary(currentTime.Hour, 5);
-                            min = valueToBooleanBinary(currentTime.Minute, 6);
-                            sec = valueToBooleanBinary(second, 6);
-                            ta = tb = 0;
-                            // -- Hours
-                            if (hour[0]) ta += 64;
-                            if (hour[1]) ta += 128;
-                            if (hour[2]) ta += 2;
-                            if (hour[3]) ta += 8;
-                            if (hour[4]) tb += 4;
-                            // -- Mins
-                            if (min[0]) tb += 2;
-                            if (min[1]) ta += 1;
-                            if (min[2]) tb += 1;
-                            if (min[3]) tb += 16;
-                            if (min[4]) ta += 16;
-                            if (min[5]) ta += 4;
-                            // -- Secs
-                            if (sec[0]) tb += 128;
-                            if (sec[1]) tb += 64;
-                            if (sec[2]) tb += 32;
-                            totalD7 = sec[3];
-                            if (sec[4]) tb += 8;
-                            if (sec[5]) ta += 32;
-                            totalA = ta;
-                            totalB = tb;
-                            break;
-                        case LightsMode.AllOff:
-                            totalA = 0;
-                            totalB = 0;
-                            totalD7 = false;
-                            break;
-                        case LightsMode.AllOn:
-                            totalA = 255;
-                            totalB = 255;
-                            totalD7 = true;
-                            break;
-                        case LightsMode.Blue:
-                            totalA = 72;
-                            totalB = 146;
-                            totalD7 = true;
-                            break;
-                        case LightsMode.Green:
-                            totalA = 145;
-                            totalB = 76;
-                            totalD7 = false;
-                            break;
-                        case LightsMode.Red:
-                            totalA = 38;
-                            totalB = 33;
-                            totalD7 = false;
-                            break;
-                    }
-                    // Sleep....until the time changes
-                    while (currentTime.Second == second) Thread.Sleep(50);
+                    if (light <= lightModeDarkThreshold)
+                    { if (lightsMode != lightsModeDark) lightsMode = lightsModeDark; }
+                    else if (lightsMode != lightsModeLight) lightsMode = lightsModeLight;
                 }
-                catch(Exception ex)
+                // Update lights based on mode
+                second = currentTime.Second;
+                switch (lightsMode)
                 {
-                    log.write("Critical malfunction occurred in calculationsThread: '" + ex.Message + "'!");
-                    Thread.Sleep(1000);
+                    case LightsMode.Time:
+                        hour = valueToBooleanBinary(currentTime.Hour, 5);
+                        min = valueToBooleanBinary(currentTime.Minute, 6);
+                        sec = valueToBooleanBinary(second, 6);
+                        ta = tb = 0;
+                        // -- Hours
+                        if (hour[0]) ta += 64;
+                        if (hour[1]) ta += 128;
+                        if (hour[2]) ta += 2;
+                        if (hour[3]) ta += 8;
+                        if (hour[4]) tb += 4;
+                        // -- Mins
+                        if (min[0]) tb += 2;
+                        if (min[1]) ta += 1;
+                        if (min[2]) tb += 1;
+                        if (min[3]) tb += 16;
+                        if (min[4]) ta += 16;
+                        if (min[5]) ta += 4;
+                        // -- Secs
+                        if (sec[0]) tb += 128;
+                        if (sec[1]) tb += 64;
+                        if (sec[2]) tb += 32;
+                        totalD7 = sec[3];
+                        if (sec[4]) tb += 8;
+                        if (sec[5]) ta += 32;
+                        totalA = ta;
+                        totalB = tb;
+                        break;
+                    case LightsMode.AllOff:
+                        totalA = 0;
+                        totalB = 0;
+                        totalD7 = false;
+                        break;
+                    case LightsMode.AllOn:
+                        totalA = 255;
+                        totalB = 255;
+                        totalD7 = true;
+                        break;
+                    case LightsMode.Blue:
+                        totalA = 72;
+                        totalB = 146;
+                        totalD7 = true;
+                        break;
+                    case LightsMode.Green:
+                        totalA = 145;
+                        totalB = 76;
+                        totalD7 = false;
+                        break;
+                    case LightsMode.Red:
+                        totalA = 38;
+                        totalB = 33;
+                        totalD7 = false;
+                        break;
+                    case LightsMode.LoveHeart:
+                        totalD7 = true;
+                        totalA = 128 + 2 + 8 + 1;
+                        totalB = 4 + 2 + 1 + 16 + 64 + 32 + 8;
+                        break;
                 }
+                // Sleep....until the time changes
+                while (currentTime.Second == second) Thread.Sleep(50);
             }
         }
         static bool totalD7 = false;    // Pin 7 light
@@ -320,6 +337,8 @@ namespace BinaryClock
                 // Reset the lighting - but only if red i.e. an error occurred
                 lightsMode = LightsMode.Time;
                 if(lightsModeLocked && lightsMode == LightsMode.Red) lightsModeLocked = false;
+                // State we've updated the time
+                timeLastUpdated = currentTime;
             }
             catch (Exception ex)
             {
@@ -375,6 +394,26 @@ namespace BinaryClock
         static bool isNumeric(char c)
         {
             return c >= 48 && c <= 57;
+        }
+        /// <summary>
+        /// Responsible for loading persisted configuration.
+        /// </summary>
+        static void loadConfiguraiton()
+        {
+            try
+            {
+                Configuration config = new Configuration(configFile);
+                if (config["mode_light"] != null) lightsModeLight = (LightsMode)int.Parse(config["mode_light"]);
+                if (config["mode_dark"] != null) lightsModeDark = (LightsMode)int.Parse(config["mode_dark"]);
+                if (config["mode_threshold"] != null) lightModeDarkThreshold = int.Parse(config["mode_threshold"]);
+                if (config["mode_alarm_a"] != null) lightsModeAlarmBuzzA = (LightsMode)int.Parse(config["mode_alarm_a"]);
+                if (config["mode_alarm_b"] != null) lightsModeAlarmBuzzB = (LightsMode)int.Parse(config["mode_alarm_b"]);
+                config.dispose();
+            }
+            catch(Exception ex)
+            {
+                log.write("Failed to load configuration: '" + ex.Message + "'!");
+            }
         }
     }
     public class Logger
@@ -532,7 +571,8 @@ namespace BinaryClock
                 log.write("Thread delegator error occurred: " + ex.Message);
                 try
                 { // Attempt to inform the user
-                    client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 56\r\nConnection: close\r\n\r\nAn error occurred...prolly ran out of memory lulz ;_;..."));
+                    string error = "<html><body><p>An error occurred...prolly ran out of memory lulz ;_;...</p><p>" + ex.Message + "</p><p>" + ex.StackTrace + "</p></body></html>";
+                    client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: " + error.Length + "\r\nConnection: close\r\n\r\n" + error));
                 }
                 catch { }
             }
@@ -565,7 +605,7 @@ namespace BinaryClock
                     {
                         // Accept the socket
                         client = sock.Accept();
-                        client.SendTimeout = 500;
+                        client.SendTimeout = 1500;
                         requests.Add(client);
                     }
                     catch (Exception ex)
@@ -573,7 +613,8 @@ namespace BinaryClock
                         log.write("Error occurred: " + ex.Message);
                         try
                         { // Attempt to inform the user
-                            client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 56\r\nConnection: close\r\n\r\nAn error occurred...prolly ran out of memory lulz ;_;..."));
+                            string error = "<html><body><p>An error occurred...prolly ran out of memory lulz ;_;...</p><p>" + ex.Message + "</p><p>" + ex.StackTrace + "</p></body></html>";
+                            client.Send(Encoding.UTF8.GetBytes("HTTP/1.1 500 Internal Server Error\r\nContent-Length: " + error.Length + "\r\nConnection: close\r\n\r\n" + error));
                         }
                         catch { }
                     }
@@ -670,6 +711,19 @@ namespace BinaryClock
 </p>
 <p>
     ...so if the Evilduino only has 64kb (0.0625% of a megabyte or 0.000061% of a gigabyte) of RAM, how are you viewing the above banner...which is 112kb? You'd be surprised how little memory is required to provide such services.
+</p>
+<h2>Contribute</h2>
+<p>The source-code of this binary-clock is available at:</p>
+<p><a href=""https://github.com/ubermeat/evilduino"">https://github.com/ubermeat/evilduino</a></p>
+
+<h2>Complaints/Contact Me</h2>
+<p>You can contact me at:</p>
+<p><a href=""mailto:limpygnome@gmail.com"">limpygnome@gmail.com</a></p>
+
+<h2>Thank-You</h2>
+<img class=""FL"" src=""http://logosdatabase.com/logoimages/85091685.jpg"" />
+<p>
+    A very huge and serious thank-you goes to the <a href=""http://forums.netduino.com/"">Netduino community</a>, who've answered many questions and helped diagnose the odd glich.
 </p>
 ");
             writePage_Footer(request, response);
@@ -769,6 +823,7 @@ namespace BinaryClock
                 catch { }
                 finally
                 {
+                    response.buffer.dispose();
                     fs.Close();
                     response.client.Close();
                 }
@@ -825,22 +880,37 @@ namespace BinaryClock
                     {
                         default:
                             const int postsPerPage = 5;
-                            int page = request.requestDirs.Length >= 3 ? tryParse(request.requestDirs[2], 1) : 1;
-                            response.buffer.Append("<h2>Posts - Page " + page + "</h2>");
+                            int page = request.requestDirs.Length >= 3 ? tryParse(request.requestDirs[2], 1) : int.MaxValue;
+                            response.buffer.Append("<h2>Posts</h2>");
                             lock (guestbookIOLocking)
                             {
                                 FileStream f = new FileStream("\\SD\\Guestbook.txt", FileMode.OpenOrCreate, FileAccess.Read);
                                 StreamReader sr = new StreamReader(f);
                                 // Read into the posts
+                                long lastPagePosition = 0;
+                                long lengthOfCurrPosition = 0;
+                                string line;
                                 for (int i = 0; i < (postsPerPage * page) - postsPerPage; i++)
-                                    sr.ReadLine();
+                                {
+                                    if ((line = sr.ReadLine()) == null)
+                                    {
+                                        page = (int)System.Math.Ceiling( (double)(i+1) / (double)postsPerPage);
+                                        sr.BaseStream.Position = lastPagePosition;
+                                        break;
+                                    }
+                                    else if (i % postsPerPage == 0)
+                                    {
+                                        lastPagePosition += lengthOfCurrPosition;
+                                        lengthOfCurrPosition = 0;
+                                    }
+                                    else
+                                        lengthOfCurrPosition += line.Length;
+                                }
                                 // Display posts
                                 int separator;
-                                string line;
                                 for (int i = 0; i < postsPerPage; i++)
                                 {
-                                    line = sr.ReadLine();
-                                    if (line != null && line.Length > 0)
+                                    if ((line = sr.ReadLine()) != null && line.Length > 0)
                                     {
                                         separator = line.IndexOf('¬');
                                         if(separator != -1)
@@ -863,7 +933,7 @@ namespace BinaryClock
                             response.buffer.Append(
 @"
 <p>
-    <a href=""/evilduino/guestbook/post"">Make a Post</a> Pages: <a href=""/evilduino/guestbook/").Append(page > 1 ? page - 1 : 1).Append(@""">Previous</a> <a href=""").Append(page == int.MaxValue ? int.MaxValue : page + 1).Append(@""">Next</a>
+    <a href=""/evilduino/guestbook/post"">Make a Post</a> Page " + page + @" <a href=""/evilduino/guestbook/").Append(page > 1 ? page - 1 : 1).Append(@""">Previous</a> <a href=""/evilduino/guestbook/").Append(page == int.MaxValue ? int.MaxValue : page + 1).Append(@""">Next</a>
 </p>
 ");
                             break;
@@ -909,11 +979,37 @@ namespace BinaryClock
                             }
                             break;
                         case "delete":
+                            if (request.clientP.Address.GetAddressBytes()[0] != allowedIpRange)
+                                page__404(request, response);
+                            else
+                            {
+                                
+                            }
                             break;
                     }
                     break;
-                case "visitors":
+                case "changelog":
                     request.disposeFormData();
+                    writePage_Header(request, response, "Evilduino - Change-log");
+                    response.buffer.Append(@"
+<h2>v1.1.0</h2>
+<ul>
+    <li>Added change-log page.</li>
+    <li>Worked on the guest-book a little more.</li>
+    <li>Modified the home-page.</li>
+    <li>Added a Lighting page to settings to change the lighting via the web.</li>
+    <li>Added a configuration class, which is used to store settings such as the lighting.</li>
+    <li>Added a love-heart light state.</li>
+    <li>Adjusted timeout of requests to 1500 m/s.</li>
+    <li>Adjusted the layout of the set alarm page and made it only add 8 hrs if no alarm had been set for the initial field values.</li>
+    <li>Changed the system-time and up-time on the global template to be more human-readable.</li>
+    <li>Changed default cache-control interval to 10 seconds.</li>
+</ul>
+<h2>v1.0.0</h2>
+<ul>
+    <li>Created Git repository and initial code-base.</li>
+</ul>
+");
                     break;
             }
             writePage_Footer(request, response);
@@ -921,17 +1017,22 @@ namespace BinaryClock
         public static void page__settings(HttpRequest request, HttpResponse response)
         {
             response.cacheControl = null;
-            writePage_Header(request, response, "Settings");
             switch (request.requestDirs.Length >= 2 ? request.requestDirs[1] : null)
             {
                 default:
+                    writePage_Header(request, response, "Settings");
                     response.buffer.Append(
 @"<h2>Menu</h2>
 <p><a href=""/settings/alarm"">Set Alarm</a></p>
 <p><a href=""/settings/light"">Set Light</a></p>
+<p><a href=""/settings/update_time"">Update Time</a></p>
+
+<h2>System Information</h2>
+<p>Last updated the time at: "+ Program.timeLastUpdated.ToString("dd/MM/yyyy HH:mm:ss") + @"</p>
 ");
                     break;
                 case "alarm":
+                    writePage_Header(request, response, "Settings");
                     int day = tryParse(request["day"], -1);
                     int month = tryParse(request["month"], -1);
                     int year = tryParse(request["year"], -1);
@@ -942,7 +1043,7 @@ namespace BinaryClock
                     {
                         if (new DateTime(year, month, day, hour, min, sec).Subtract(Program.currentTime).Seconds < 1)
                             response.buffer.Append(
-@"<h2>Set Alarm - Failure</h2>
+@"<h2>Settings - Set Alarm - Failure</h2>
 <p>The specified time would immediately trigger the alarm - pick a future time!</p>
 <p><a href=""/settings"">Settings</a><p>
 <p><a href=""/settings/alarm"">Settings - alarm</a><p>
@@ -952,7 +1053,7 @@ namespace BinaryClock
                         {
                             Program.alarm = new DateTime(year, month, day, hour, min, sec);
                             response.buffer.Append(
-    @"<h2>Set Alarm - Updated alarm successfully</h2>
+    @"<h2>Settings - Set Alarm - Updated alarm successfully</h2>
 <p>Updated successfully to '" + Program.alarm.ToString("dd/MM/yyyy HH:mm:ss") + @"'...</p>
 <p><a href=""/settings"">Settings</a><p>
 <p><a href=""/settings/alarm"">Settings - alarm</a><p>
@@ -962,28 +1063,205 @@ namespace BinaryClock
                     }
                     else
                     {
-                        DateTime tomorrow = Program.alarm != DateTime.MaxValue ? Program.alarm : Program.currentTime.AddDays(1);
+                        DateTime tomorrow = Program.alarm != DateTime.MaxValue ? Program.alarm : Program.currentTime.AddHours(8);
                         response.buffer.Append(
-@"<h2>Set Alarm</h2>
+@"<h2>Settings - Set Alarm</h2>
 <form method=""post"" action=""/settings/alarm"">
-<div>
-    <p>Year: <input type=""text"" name=""year"" value=""").Append(year > -1 ? year : tomorrow.Year).Append(@""" /></p>
-    <p>Month: <input type=""text"" name=""month"" value=""").Append(month > -1 ? month : tomorrow.Month).Append(@""" /></p>
-    <p>Day: <input type=""text"" name=""day"" value=""").Append(day > -1 ? day : tomorrow.Day).Append(@""" /></p>
-    <p>Hour: <input type=""text"" name=""hour"" value=""").Append(hour > -1 ? hour : tomorrow.Hour).Append(@""" /></p>
-    <p>Minute: <input type=""text"" name=""minute"" value=""").Append(min > -1 ? min : tomorrow.Minute).Append(@""" /></p>
-    <p>Second: <input type=""text"" name=""second"" value=""").Append(sec > -1 ? sec : tomorrow.Second).Append(@""" /></p>
-    <p><input type=""submit"" value=""Set"" />
+<div class=""ROW"">
+    <div>Year:</div>
+    <div>
+        <input type=""text"" name=""year"" value=""").Append(year > -1 ? year : tomorrow.Year).Append(@""" />
+    </div>
 </div>
-<div>Current alarm: ").Append(Program.alarm != DateTime.MaxValue ? Program.alarm.ToString("dd/MM/yyyy HH:mm:ss") : "none").Append(@"</div>
+<div class=""ROW"">
+    <div>Month:</div>
+    <div>
+        <input type=""text"" name=""month"" value=""").Append(month > -1 ? month : tomorrow.Month).Append(@""" />
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Day:</div>
+    <div>
+        <input type=""text"" name=""day"" value=""").Append(day > -1 ? day : tomorrow.Day).Append(@""" />
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Hour:</div>
+    <div>
+        <input type=""text"" name=""hour"" value=""").Append(hour > -1 ? hour : tomorrow.Hour).Append(@""" />
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Minute:</div>
+    <div>
+        <input type=""text"" name=""minute"" value=""").Append(min > -1 ? min : tomorrow.Minute).Append(@""" />
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Second:</div>
+    <div>
+        <input type=""text"" name=""second"" value=""").Append(sec > -1 ? sec : tomorrow.Second).Append(@""" />
+    </div>
+</div>
+<div class=""ROW"">
+    <div>&nbsp;</div>
+    <div>
+        <input type=""submit"" value=""Set"" />
+    </div>
+</div>
+<p>
+    Current alarm: ").Append(Program.alarm != DateTime.MaxValue ? Program.alarm.ToString("dd/MM/yyyy HH:mm:ss") : "none").Append(@"
+</p>
 </form>
 ");
                     }
                     break;
+                case "update_time":
+                    writePage_Header(request, response, "Settings");
+                    try
+                    {
+                        Program.updateTime();
+                        response.buffer.Append(
+@"<h2>Settings - Update Time</h2>
+<p>Updated the time successfully to:</p>
+<p>" + Program.currentTime.ToString("dd/MM/yyyy HH:mm:ss") + @"</p>
+<p><a href=""/settings/update_time"">Settings - Update Time</a></p>
+<p><a href=""/settings"">Settings</a></p>
+<p><a href="">/home"">Home</a></p>
+");
+                    }
+                    catch(Exception ex)
+                    {
+                        response.buffer.Append(
+@"<h2>Settings - Update Time</h2>
+<p>Failed to update the time:</p>
+<p>" + ex.Message + @"</p>
+<h2>Stack-trace</h2>
+<p>" + ex.StackTrace + @"</p>
+<p><a href=""/settings/update_time"">Settings - Update Time</a></p>
+<p><a href=""/settings"">Settings</a></p>
+<p><a href="">/home"">Home</a></p>
+");
+                    }
+
+                    break;
                 case "light":
+                    Debug.EnableGCMessages(true);
+                    Debug.Print("wrir");
+                    // Get any new, else existing, configuration values
+                    int mode_light = tryParse(request["mode_light"], (int)Program.lightsModeLight);
+                    int mode_dark = tryParse(request["mode_dark"], (int)Program.lightsModeDark);
+                    int mode_threshold = tryParse(request["mode_threshold"], Program.lightModeDarkThreshold);
+                    int mode_alarmA = tryParse(request["mode_alarm_a"], (int)Program.lightsModeAlarmBuzzA);
+                    int mode_alarmB = tryParse(request["mode_alarm_a"], (int)Program.lightsModeAlarmBuzzB);
+                    // Dispose form data - we no longer need it
+                    request.disposeFormData();
+                    Configuration config = null; // We only load and save the config if we actually change any configuration - more efficient
+                    // Check if any settings have changed
+                    if(mode_light != (int)Program.lightsModeLight)
+                    {
+                        if (config == null) config = new Configuration(Program.configFile);
+                        Program.lightsModeLight = (Program.LightsMode)mode_light;
+                        config["mode_light"] = mode_light.ToString();
+                    }
+                    if(mode_dark != (int)Program.lightsModeDark)
+                    {
+                        if (config == null) config = new Configuration(Program.configFile);
+                        Program.lightsModeDark = (Program.LightsMode)mode_dark;
+                        config["mode_dark"] = mode_dark.ToString();
+                    }
+                    if(mode_threshold != Program.lightModeDarkThreshold)
+                    {
+                        if (config == null) config = new Configuration(Program.configFile);
+                        Program.lightModeDarkThreshold = mode_threshold;
+                        config["mode_threshold"] = mode_threshold.ToString();
+                    }
+                    if(mode_alarmA != (int)Program.lightsModeAlarmBuzzA)
+                    {
+                        if (config == null) config = new Configuration(Program.configFile);
+                        Program.lightsModeAlarmBuzzA = (Program.LightsMode)mode_alarmA;
+                        config["mode_alarm_a"] = mode_alarmA.ToString();
+                    }
+                    if(mode_alarmB != (int)Program.lightsModeAlarmBuzzB)
+                    {
+                        if (config == null) config = new Configuration(Program.configFile);
+                        Program.lightsModeAlarmBuzzB = (Program.LightsMode)mode_alarmB;
+                        config["mode_alarm_b"] = mode_alarmB.ToString();
+                    }
+                    if (config != null)
+                    {
+                        config.save();
+                        config = null;
+                    }
+                    // Display the form
+                    writePage_Header(request, response, "Settings");
+                    response.buffer.Append(
+@"<form method=""post"" action=""/settings/light"">
+<h2>Light Sensitivity</h2>
+<div class=""ROW"">
+    <div>Mode light:</div>
+    <div>
+        <select name=""mode_light"">
+            ").Append(modesToOptions(mode_light)).Append(@"
+        </select>
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Mode dark:</div>
+    <div>
+        <select name=""mode_dark"">
+            ").Append(modesToOptions(mode_dark)).Append(@"
+        </select>
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Mode light:</div>
+    <div>
+        <input type=""text"" name=""mode_threshold"" value=""").Append(mode_threshold).Append(@""" />
+    </div>
+</div>
+<h2>Alarm Lights</h2>
+<div class=""ROW"">
+    <div>Mode buzz on:</div>
+    <div>
+        <select name=""mode_alarm_a"">
+            ").Append(modesToOptions(mode_alarmA)).Append(@"
+        </select>
+    </div>
+</div>
+<div class=""ROW"">
+    <div>Mode buzz off:</div>
+    <div>
+        <select name=""mode_alarm_b"">
+            ").Append(modesToOptions(mode_alarmB)).Append(@"
+        </select>
+    </div>
+</div>
+
+
+<div class=""ROW"">
+    <input type=""submit"" value=""Save"" />
+</div>
+</form>
+");
+                    break;
+                case "light_updated":
                     break;
             }
             writePage_Footer(request, response);
+        }
+        static string modesToOptions(int selectedIndex)
+        {
+            StringBuilder sb = new StringBuilder();
+            // No way to iterate an enum collection?
+            sb.Append(@"<option value=""1""").Append(selectedIndex == 1 ? " selected" : string.Empty).Append(@">Binary Time</option>");
+            sb.Append(@"<option value=""2""").Append(selectedIndex == 2 ? " selected" : string.Empty).Append(@">All On</option>");
+            sb.Append(@"<option value=""3""").Append(selectedIndex == 3 ? " selected" : string.Empty).Append(@">All Off</option>");
+            sb.Append(@"<option value=""4""").Append(selectedIndex == 4 ? " selected" : string.Empty).Append(@">Red</option>");
+            sb.Append(@"<option value=""5""").Append(selectedIndex == 5 ? " selected" : string.Empty).Append(@">Green</option>");
+            sb.Append(@"<option value=""6""").Append(selectedIndex == 6 ? " selected" : string.Empty).Append(@">Blue</option>");
+            sb.Append(@"<option value=""7""").Append(selectedIndex == 7 ? " selected" : string.Empty).Append(@">Love Heart</option>");
+            return sb.ToString();
         }
         public static void page__files(HttpRequest request, HttpResponse response)
         {
@@ -1139,7 +1417,7 @@ namespace BinaryClock
 <div class=""WRAPPER"">
 <div class=""BANNER"">
     <div class=""STATS_PANEL"">
-        <div><b>System time:</b> ").Append(Program.currentTime).Append(@"</div>
+        <div><b>System time:</b> ").Append(Program.currentTime.ToString("dd/MM/yyyy HH:mm:ss")).Append(@"</div>
         <div><b>Temperature:</b> ").Append(Program.temperature).Append(@"°C</div>
         <div><b>Light:</b> ").Append(Program.light).Append(@"%</div>
     </div>
@@ -1161,6 +1439,7 @@ namespace BinaryClock
 	<div>Evilduino</div>
     <a href=""/evilduino/about"">About</a>
     <a href=""/evilduino/guestbook"">Guestbook</a>
+    <a href=""/evilduino/changelog"">Change-log</a>
 		
 	<div>Porn Tools</div>
 	<a href=""/redtube"">Random Redtube Vidya</a>
@@ -1178,12 +1457,13 @@ namespace BinaryClock
         /// <param name="response"></param>
         public static void writePage_Footer(HttpRequest request, HttpResponse response)
         {
+            TimeSpan uptime = DateTime.Now.Subtract(startTime);
             response.buffer.Append(
 @"
 </div>
 <div class=""FOOTER"">
-	<b>Uptime:</b> ").Append(DateTime.Now.Subtract(startTime).ToString()).Append(@"
-	<b>Version:</b>1.0.0.evil
+	<b>Uptime:</b> ").Append(uptime.Days).Append(" days ").Append(uptime.Hours).Append(" hrs ").Append(uptime.Minutes).Append(" mins ").Append(uptime.Seconds).Append(" secs").Append(@"
+	<b>Version:</b>1.1.0.evil
 	<a href=""http://www.ubermeat.co.uk/"">Ubermeat</a>
 	<a href=""").Append(Program.github).Append(@""">Github</a>
 </div>
@@ -1205,7 +1485,7 @@ namespace BinaryClock
         /// <param name="value"></param>
         /// <param name="failValue"></param>
         /// <returns></returns>
-        static int tryParse(string value, int failValue)
+        public static int tryParse(string value, int failValue)
         {
             if (value == null) return failValue;
             for (int i = 0; i < value.Length; i++)
@@ -1219,7 +1499,7 @@ namespace BinaryClock
         /// <param name="value"></param>
         /// <param name="htmlProtection"></param>
         /// <returns></returns>
-        static string urlDecode(string value, bool htmlProtection)
+        public static string urlDecode(string value, bool htmlProtection)
         {
             StringBuilder sb = new StringBuilder(value);
             sb.Replace("+", " ");
@@ -1318,7 +1598,7 @@ namespace BinaryClock
         /// <param name="chars"></param>
         /// <param name="urlEncodeOverflow"></param>
         /// <returns></returns>
-        static char[] urlDecodeWithOverflow(char[] chars, ref char[] urlEncodeOverflow)
+        public static char[] urlDecodeWithOverflow(char[] chars, ref char[] urlEncodeOverflow)
         {
             StringBuilder sb = new StringBuilder((urlEncodeOverflow != null && urlEncodeOverflow.Length > 0 ? new string(urlEncodeOverflow) : string.Empty) + new string(chars));
             urlEncodeOverflow = null;
@@ -1355,7 +1635,7 @@ namespace BinaryClock
         /// </summary>
         /// <param name="chars"></param>
         /// <returns></returns>
-        static char convertHexToChar(char[] chars)
+        public static char convertHexToChar(char[] chars)
         {
             return (char)Convert.ToInt32(new string(chars), 16);
         }
@@ -1366,7 +1646,7 @@ namespace BinaryClock
         /// <param name="charr"></param>
         /// <param name="startIndex"></param>
         /// <returns></returns>
-        static int indexOf(ref char[] chars, char charr, int startIndex = 0)
+        public static int indexOf(ref char[] chars, char charr, int startIndex = 0)
         {
             for (int i = startIndex; i < chars.Length; i++)
                 if (chars[i] == charr) return i;
@@ -1381,7 +1661,7 @@ namespace BinaryClock
         /// <param name="length"></param>
         /// <param name="abortChar"></param>
         /// <returns></returns>
-        static string substring(ref char[] chars, int index = 0, int length = 0, char abortChar = '&')
+        public static string substring(ref char[] chars, int index = 0, int length = 0, char abortChar = '&')
         {
             StringBuilder sb = new StringBuilder();
             for (int i = index; i < (length == 0 ? chars.Length : length); i++)
@@ -1496,7 +1776,7 @@ namespace BinaryClock
         /// 
         /// You can also set this value as null to disable the field being sent in the headers.
         /// </summary>
-        public string cacheControl = "max-age=3600";
+        public string cacheControl = "max-age=5";
         /// <summary>
         /// The buffer used for sending string-data to the client; will not be used if bufferBytes is defined.
         /// </summary>
@@ -1660,6 +1940,76 @@ namespace BinaryClock
             try { fs.Close(); } catch { }
             try { fs.Dispose(); } catch { }
             try { File.Delete(path); } catch { throw new Exception("Failed to delete cache file '" + path + "'!"); }
+        }
+    }
+    /// <summary>
+    /// A class responsible for handling general key-value configuration.
+    /// 
+    /// WARNING: key-names cannot contain an equals operator and values cannot contain new-line chars.
+    /// </summary>
+    public class Configuration
+    {
+        private string path;
+        private Hashtable config;
+        public Configuration(string path)
+        {
+            this.path = path;
+            config = new Hashtable();
+            // Check if any configuration already exists
+            if (File.Exists(path))
+            {
+                using (FileStream s = getFileStream())
+                {
+                    using (StreamReader sr = new StreamReader(s))
+                    {
+                        string line;
+                        int splitter;
+                        // Read each line until there is no more i.e. null
+                        while ((line = sr.ReadLine()) != null)
+                        {
+                            splitter = line.IndexOf('='); // Grab the first = and split it for the key-value
+                            config.Add(line.Substring(0, splitter), line.Substring(splitter + 1));
+                        }
+                    }
+                }
+            }
+        }
+        public string this[string key]
+        {
+            get
+            {
+                if (config.Contains(key)) return (string)config[key];
+                return null;
+            }
+            set
+            {
+                if (key.IndexOf('=') != -1) throw new ArgumentException("Key-name cannot contain the equals operator!");
+                else if (value.IndexOf('\n') != -1) throw new ArgumentException("Value cannot contain a new-line character!");
+                config[key] = value;
+            }
+        }
+        public void save()
+        {
+            using (FileStream s = getFileStream())
+            {
+                byte[] buffer;
+                foreach (DictionaryEntry de in config)
+                {
+                    buffer = Encoding.UTF8.GetBytes(de.Key + "=" + de.Value + "\n");
+                    s.Write(buffer, 0, buffer.Length);
+                }
+                s.Flush();
+            }
+        }
+        public void dispose()
+        {
+            config.Clear();
+            config = null;
+            path = null;
+        }
+        private FileStream getFileStream()
+        {
+            return new FileStream(path, FileMode.OpenOrCreate);
         }
     }
 }
